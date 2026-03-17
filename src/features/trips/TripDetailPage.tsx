@@ -6,6 +6,10 @@ import { db } from '../../db/database';
 import type { Trip, Vehicle } from '../../types/models';
 import { TripRouteMap } from './components/TripRouteMap';
 import { deleteManualTrip } from './tripMutations';
+import { SpeedLegend } from '../track/components/SpeedLegend';
+import { shouldRenderSpeedColoredRoute, summarizeRouteSpeedDataQuality } from '../track/routeSpeedSegmentation';
+import { getSpeedColorFallbackMessage } from '../track/speedRouteUx';
+import { summarizeRouteInsights } from '../track/routeInsights';
 import {
   formatTripAvgSpeed,
   formatTripDate,
@@ -213,6 +217,10 @@ function RouteSection({ trip, isTrackedTrip }: { trip: Trip; isTrackedTrip: bool
   const hasRoutePoints = trip.routePoints.length > 0;
   const startPoint = trip.routePoints[0];
   const endPoint = trip.routePoints[trip.routePoints.length - 1];
+  const speedDataQuality = useMemo(() => summarizeRouteSpeedDataQuality(trip.routePoints), [trip.routePoints]);
+  const canRenderSpeedColors = shouldRenderSpeedColoredRoute(speedDataQuality);
+  const shouldShowSpeedLegend = isTrackedTrip && canRenderSpeedColors;
+  const routeInsights = useMemo(() => summarizeRouteInsights(trip.routePoints), [trip.routePoints]);
 
   const fallbackStart = useMemo(
     () => (trip.startLat !== undefined && trip.startLng !== undefined ? `${trip.startLat.toFixed(6)}, ${trip.startLng.toFixed(6)}` : '—'),
@@ -245,10 +253,45 @@ function RouteSection({ trip, isTrackedTrip }: { trip: Trip; isTrackedTrip: bool
         />
       </dl>
 
+
+
+      {isTrackedTrip ? (
+        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Route insights</p>
+          <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <InsightItem label="Route points" value={`${routeInsights.routePoints}`} />
+            <InsightItem label="Min speed" value={formatOptionalSpeed(routeInsights.minSpeedKmh)} />
+            <InsightItem label="Max speed" value={formatOptionalSpeed(routeInsights.maxSpeedKmh)} />
+            <InsightItem label="Avg speed" value={formatOptionalSpeed(routeInsights.averageSpeedKmh)} />
+            <InsightItem label="Very slow segments" value={`${routeInsights.verySlowSegmentCount}`} />
+            <InsightItem
+              label="Near-stop duration"
+              value={routeInsights.nearStopDurationSeconds !== undefined ? formatDurationMinutes(routeInsights.nearStopDurationSeconds) : '—'}
+            />
+          </div>
+        </div>
+      ) : null}
+
       {trip.routePoints.length >= 2 ? (
-        <div className="mt-3">
+        <div className="mt-3 space-y-3">
           <TripRouteMap routePoints={trip.routePoints} />
-          <p className="mt-2 text-xs text-slate-500">Green marker = start, red marker = end.</p>
+          <p className="text-xs text-slate-500">Green marker = start, red marker = end.</p>
+
+          <div className="rounded-xl border border-slate-200 bg-white p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Speed profile</p>
+            <p className="mt-1 text-xs text-slate-600">Colors use shared speed bands and gracefully fall back when data confidence is low.</p>
+
+          {shouldShowSpeedLegend ? (
+            <div>
+              <p className="mb-2 mt-2 text-xs text-slate-600">Route colors represent speed bands for each segment.</p>
+              <SpeedLegend />
+            </div>
+          ) : isTrackedTrip ? (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              {getSpeedColorFallbackMessage('trip')}
+            </p>
+          ) : null}
+          </div>
         </div>
       ) : hasRoutePoints ? (
         <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-sm text-slate-600">
@@ -307,6 +350,31 @@ function Detail({ label, value, className }: { label: string; value: string; cla
       <dd className="text-sm font-medium text-slate-900">{value}</dd>
     </div>
   );
+}
+
+
+function InsightItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-white px-2.5 py-2">
+      <p className="text-[11px] text-slate-500">{label}</p>
+      <p className="text-sm font-medium text-slate-900">{value}</p>
+    </div>
+  );
+}
+
+function formatOptionalSpeed(value?: number): string {
+  if (value === undefined || !Number.isFinite(value)) return '—';
+  return `${value.toFixed(1)} km/h`;
+}
+
+function formatDurationMinutes(durationSeconds: number): string {
+  const safe = Math.max(0, Math.floor(durationSeconds));
+  const minutes = Math.floor(safe / 60);
+  const seconds = safe % 60;
+  if (minutes > 0) {
+    return `${minutes}m ${seconds}s`;
+  }
+  return `${seconds}s`;
 }
 
 function formatDateTime(value: string): string {

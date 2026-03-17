@@ -2,11 +2,13 @@ import type { LatLngTuple } from 'leaflet';
 import { MapContainer, CircleMarker, Polyline, TileLayer, useMap } from 'react-leaflet';
 import { useEffect, useMemo } from 'react';
 import type { RoutePoint } from '../../../types/models';
+import { buildRenderableGroupedSpeedSegments } from '../routeSpeedSegmentation';
+import { getSpeedBandColor } from '../speedLegend';
+import { NEUTRAL_ROUTE_PATH_OPTIONS, SPEED_ROUTE_PATH_OPTIONS } from '../speedRouteUx';
 import type { TrackingPosition } from '../trackingTypes';
 
 const DEFAULT_CENTER: LatLngTuple = [48.137154, 11.576124];
 const DEFAULT_ZOOM = 13;
-
 export function LiveTrackingMap({
   routePoints,
   currentPosition
@@ -18,6 +20,15 @@ export function LiveTrackingMap({
     () => routePoints.map((point) => [point.lat, point.lng]),
     [routePoints]
   );
+
+  const groupedSegments = useMemo(() => buildRenderableGroupedSpeedSegments(routePoints), [routePoints]);
+
+  const groupedLatLngs = useMemo(
+    () => groupedSegments.map((segment) => segment.points.map((point) => [point.lat, point.lng] as LatLngTuple)),
+    [groupedSegments]
+  );
+
+  const shouldRenderSpeedPreview = groupedSegments.length > 0;
 
   const currentLatLng = useMemo<LatLngTuple | undefined>(() => {
     if (currentPosition) {
@@ -47,9 +58,17 @@ export function LiveTrackingMap({
 
         <MapViewportController routeLatLngs={routeLatLngs} currentLatLng={currentLatLng} />
 
-        {routeLatLngs.length >= 2 ? (
-          <Polyline positions={routeLatLngs} pathOptions={{ color: '#0ea5e9', weight: 4, opacity: 0.9 }} />
-        ) : null}
+        {shouldRenderSpeedPreview
+          ? groupedSegments.map((segment, index) => (
+              <Polyline
+                key={`${segment.speedBand}-${index}`}
+                positions={groupedLatLngs[index]}
+                pathOptions={{ ...SPEED_ROUTE_PATH_OPTIONS, color: getSpeedBandColor(segment.colorToken) }}
+              />
+            ))
+          : routeLatLngs.length >= 2
+            ? <Polyline positions={routeLatLngs} pathOptions={NEUTRAL_ROUTE_PATH_OPTIONS} />
+            : null}
 
         {currentLatLng ? (
           <CircleMarker

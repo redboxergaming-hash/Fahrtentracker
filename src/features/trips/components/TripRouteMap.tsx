@@ -2,11 +2,20 @@ import type { LatLngTuple } from 'leaflet';
 import { CircleMarker, MapContainer, Polyline, TileLayer, useMap } from 'react-leaflet';
 import { useEffect, useMemo } from 'react';
 import type { RoutePoint } from '../../../types/models';
+import { getSpeedBandColor } from '../../track/speedLegend';
+import { buildRenderableGroupedSpeedSegments } from '../../track/routeSpeedSegmentation';
+import { NEUTRAL_ROUTE_PATH_OPTIONS, SPEED_ROUTE_PATH_OPTIONS } from '../../track/speedRouteUx';
 
 const DEFAULT_CENTER: LatLngTuple = [48.137154, 11.576124];
 
 export function TripRouteMap({ routePoints }: { routePoints: RoutePoint[] }) {
   const latLngs = useMemo<LatLngTuple[]>(() => routePoints.map((point) => [point.lat, point.lng]), [routePoints]);
+  const groupedSegments = useMemo(() => buildRenderableGroupedSpeedSegments(routePoints), [routePoints]);
+  const groupedLatLngs = useMemo(
+    () => groupedSegments.map((segment) => segment.points.map((point) => [point.lat, point.lng] as LatLngTuple)),
+    [groupedSegments]
+  );
+
   const start = latLngs[0];
   const end = latLngs[latLngs.length - 1];
 
@@ -20,9 +29,17 @@ export function TripRouteMap({ routePoints }: { routePoints: RoutePoint[] }) {
 
         <FitTripRouteBounds latLngs={latLngs} />
 
-        {latLngs.length >= 2 ? (
-          <Polyline positions={latLngs} pathOptions={{ color: '#0ea5e9', weight: 4, opacity: 0.9 }} />
-        ) : null}
+        {groupedSegments.length > 0
+          ? groupedSegments.map((segment, index) => (
+              <Polyline
+                key={`${segment.speedBand}-${index}`}
+                positions={groupedLatLngs[index]}
+                pathOptions={{ ...SPEED_ROUTE_PATH_OPTIONS, color: getSpeedBandColor(segment.colorToken) }}
+              />
+            ))
+          : latLngs.length >= 2
+            ? <Polyline positions={latLngs} pathOptions={NEUTRAL_ROUTE_PATH_OPTIONS} />
+            : null}
 
         {start ? (
           <CircleMarker
