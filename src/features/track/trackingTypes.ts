@@ -1,13 +1,13 @@
 import type { RoutePoint } from '../../types/models';
 
-export type TrackingStatus =
-  | 'idle'
-  | 'requesting-permission'
-  | 'active'
-  | 'location-acquired'
-  | 'paused'
-  | 'stopped'
-  | 'permission-denied'
+export type TrackingStatus = 'idle' | 'active' | 'paused' | 'stopped';
+
+export type GpsAvailabilityStatus =
+  | 'unknown'
+  | 'acquiring'
+  | 'available'
+  | 'temporarily-unavailable'
+  | 'denied'
   | 'error';
 
 export interface TrackingGeolocationError {
@@ -29,10 +29,12 @@ export interface TrackingPosition {
 export interface TrackingSession {
   selectedVehicleId?: string;
   status: TrackingStatus;
+  gpsAvailability: GpsAvailabilityStatus;
   startedAt?: string;
   pausedAt?: string;
   accumulatedPausedSeconds: number;
   currentPosition?: TrackingPosition;
+  lastSuccessfulGpsAt?: string;
   routePoints: RoutePoint[];
   elapsedSeconds: number;
   totalDistanceKm: number;
@@ -45,10 +47,12 @@ export interface TrackingSession {
 export const initialTrackingSession: TrackingSession = {
   selectedVehicleId: undefined,
   status: 'idle',
+  gpsAvailability: 'unknown',
   startedAt: undefined,
   pausedAt: undefined,
   accumulatedPausedSeconds: 0,
   currentPosition: undefined,
+  lastSuccessfulGpsAt: undefined,
   routePoints: [],
   elapsedSeconds: 0,
   totalDistanceKm: 0,

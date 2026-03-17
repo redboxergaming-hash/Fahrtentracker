@@ -52,19 +52,22 @@ export async function createTrackedTripFromSession(session: TrackingSession): Pr
     throw new Error('Tracking has not started yet.');
   }
 
-  if (session.routePoints.length < 2) {
-    throw new Error('Not enough route points to save a tracked trip yet.');
-  }
-
   const timestamp = new Date().toISOString();
   const routePoints = session.routePoints;
   const start = routePoints[0];
   const end = routePoints[routePoints.length - 1];
 
+  /**
+   * Stop/save must work even if GPS is currently unavailable.
+   * Policy: if no route points were captured yet, persist a tracked draft with
+   * timing/session metrics and no geometry so the session is not silently lost.
+   */
+  const status: Trip['status'] = routePoints.length === 0 ? 'draft' : 'completed';
+
   const trip: Trip = {
     id: crypto.randomUUID(),
     vehicleId: session.selectedVehicleId,
-    status: 'completed',
+    status,
     source: 'tracked',
     category: undefined,
     startTime: startedAt,

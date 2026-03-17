@@ -10,6 +10,7 @@ import VehicleDetailPage from '../features/vehicles/VehicleDetailPage';
 import VehicleEditPage from '../features/vehicles/VehicleEditPage';
 import VehiclesPage from '../features/vehicles/VehiclesPage';
 import TrackPage from '../features/track/TrackPage';
+import StatsPage from '../features/stats/StatsPage';
 import PlaceholderPage from '../pages/PlaceholderPage';
 
 export function AppRoutes() {
@@ -27,7 +28,7 @@ export function AppRoutes() {
         <Route path="/vehicles/:vehicleId/edit" element={<VehicleEditPage />} />
         <Route path="/vehicles/:vehicleId" element={<VehicleDetailPage />} />
         <Route path="/fuel" element={<PlaceholderPage title="Fuel" />} />
-        <Route path="/stats" element={<PlaceholderPage title="Stats" />} />
+        <Route path="/stats" element={<StatsPage />} />
         <Route path="/settings" element={<PlaceholderPage title="Settings" />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

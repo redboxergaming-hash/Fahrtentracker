@@ -8,7 +8,7 @@ type PersistedTrackingSession = {
 
 const STORAGE_KEY = 'fahrtentracker:active-tracking-session';
 
-const RESTORABLE_STATUSES: TrackingStatus[] = ['requesting-permission', 'active', 'paused'];
+const RESTORABLE_STATUSES: TrackingStatus[] = ['active', 'paused'];
 
 export function persistTrackingSession(session: TrackingSession): void {
   if (typeof window === 'undefined') return;

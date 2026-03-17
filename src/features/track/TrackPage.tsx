@@ -48,30 +48,25 @@ export default function TrackPage() {
     [vehicles, session.selectedVehicleId]
   );
 
-  const statusLabel = getStatusLabel(session, Boolean(selectedVehicle));
-  const statusToneClass = getStatusToneClass(session);
+  const sessionStatusLabel = getSessionStatusLabel(session, Boolean(selectedVehicle));
+  const sessionStatusToneClass = getSessionStatusToneClass(session);
+  const gpsStatusLabel = getGpsAvailabilityLabel(session.gpsAvailability);
+  const gpsStatusMessage = getGpsStatusMessage(session);
+  const currentSpeedDisplay = getCurrentSpeedDisplay(session);
   const canStart =
-    isGeolocationSupported() &&
     Boolean(session.selectedVehicleId) &&
     session.status !== 'active' &&
-    session.status !== 'requesting-permission' &&
     !restoredSession;
 
   const canStop =
     !isSavingTrip &&
-    (session.status === 'active' || session.status === 'paused' || session.status === 'requesting-permission');
+    (session.status === 'active' || session.status === 'paused');
 
   const liveSpeedDataQuality = useMemo(() => summarizeRouteSpeedDataQuality(session.routePoints), [session.routePoints]);
   const canPreviewSpeedColors = shouldRenderSpeedColoredRoute(liveSpeedDataQuality);
 
   const stopAndSaveTrip = async () => {
     setSaveFeedback(null);
-
-    if (session.routePoints.length < 2) {
-      setIsStopConfirmOpen(false);
-      setSaveFeedback('Need at least 2 route points before saving a tracked trip. Keep tracking a bit longer.');
-      return;
-    }
 
     try {
       setIsSavingTrip(true);
@@ -118,11 +113,12 @@ export default function TrackPage() {
             Tracking did not continue in the background while the app was closed. Continue to resume from the saved
             route or discard it.
           </p>
-          <div className="grid grid-cols-2 gap-2 rounded-xl border border-amber-200 bg-white/60 p-2 text-xs text-amber-900 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 rounded-xl border border-amber-200 bg-white/60 p-2 text-xs text-amber-900 sm:grid-cols-5">
             <InfoRow label="Route points" value={`${restoredSession.routePoints.length}`} />
             <InfoRow label="Distance" value={`${restoredSession.totalDistanceKm.toFixed(1)} km`} />
             <InfoRow label="Elapsed" value={formatElapsed(restoredSession.elapsedSeconds)} />
-            <InfoRow label="Status" value={restoredSession.status === 'paused' ? 'Paused' : 'Needs resume'} />
+            <InfoRow label="Session" value={restoredSession.status === 'paused' ? 'Paused' : 'Active'} />
+            <InfoRow label="GPS" value={getGpsAvailabilityLabel(restoredSession.gpsAvailability)} />
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
@@ -162,12 +158,27 @@ export default function TrackPage() {
           </select>
         </label>
 
-        <div className={`rounded-xl border p-3 ${statusToneClass}`}>
-          <p className="text-xs uppercase tracking-wide">Status</p>
-          <p className="mt-1 text-sm font-medium">{statusLabel}</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className={`rounded-xl border p-3 ${sessionStatusToneClass}`}>
+            <p className="text-xs uppercase tracking-wide">Tracking session</p>
+            <p className="mt-1 text-sm font-medium">{sessionStatusLabel}</p>
+          </div>
+
+          {session.status !== 'idle' ? (
+            <div className={`rounded-xl border p-3 ${getGpsToneClass(session.gpsAvailability)}`}>
+              <p className="text-xs uppercase tracking-wide">GPS signal</p>
+              <p className="mt-1 text-sm font-medium">{gpsStatusLabel}</p>
+              <p className="mt-1 text-xs">{gpsStatusMessage}</p>
+              {session.lastSuccessfulGpsAt ? (
+                <p className="mt-1 text-xs text-slate-600">
+                  Last GPS fix: {new Date(session.lastSuccessfulGpsAt).toLocaleTimeString()}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
-        {session.geolocationError ? (
+        {session.geolocationError && (session.gpsAvailability === 'denied' || session.gpsAvailability === 'error') ? (
           <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
             <p className="font-medium">
               {isPermissionDeniedError(session.geolocationError) ? 'Permission denied' : 'Location error'}
@@ -203,7 +214,7 @@ export default function TrackPage() {
               className="sm:col-span-2 inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Navigation size={16} />
-              {session.status === 'requesting-permission' ? 'Requesting permission…' : 'Start live tracking'}
+              Start live tracking
             </button>
           )}
 
@@ -231,7 +242,10 @@ export default function TrackPage() {
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <p className="text-sm font-semibold text-slate-900">Stop tracking and save this trip?</p>
           <p className="mt-1 text-xs text-slate-600">
-            The current session will be stored as a tracked trip with {session.routePoints.length} route points.
+            This session will be saved with {session.routePoints.length} recorded route point{session.routePoints.length === 1 ? '' : 's'}.
+            {session.routePoints.length === 0
+              ? ' No GPS points were captured yet, so it will be saved as a tracked draft to avoid data loss.'
+              : ''}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button
@@ -257,7 +271,7 @@ export default function TrackPage() {
       <section className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         <MetricCard label="Elapsed time" value={formatElapsed(session.elapsedSeconds)} icon={<Timer size={14} />} />
         <MetricCard label="Distance" value={`${session.totalDistanceKm.toFixed(1)} km`} />
-        <MetricCard label="Current speed" value={`${session.currentSpeedKmh.toFixed(1)} km/h`} />
+        <MetricCard label="Current speed" value={currentSpeedDisplay} />
         <MetricCard label="Average speed" value={`${session.averageSpeedKmh.toFixed(1)} km/h`} />
         <MetricCard
           label="Max speed"
@@ -331,29 +345,17 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function getStatusLabel(session: TrackingSession, hasVehicle: boolean): string {
-  if (session.status === 'requesting-permission') {
-    return 'Requesting location permission…';
-  }
-
+function getSessionStatusLabel(session: TrackingSession, hasVehicle: boolean): string {
   if (session.status === 'active') {
-    return 'Tracking active — route and metrics are updating.';
+    return 'Tracking active';
   }
 
   if (session.status === 'paused') {
-    return 'Tracking paused — no points are being recorded.';
+    return 'Tracking paused';
   }
 
   if (session.status === 'stopped') {
-    return 'Tracking stopped.';
-  }
-
-  if (session.status === 'permission-denied') {
-    return 'Permission denied.';
-  }
-
-  if (session.status === 'error') {
-    return 'Location error.';
+    return 'Tracking stopped';
   }
 
   if (!hasVehicle) {
@@ -363,11 +365,7 @@ function getStatusLabel(session: TrackingSession, hasVehicle: boolean): string {
   return 'Idle — ready to start live tracking.';
 }
 
-function getStatusToneClass(session: TrackingSession): string {
-  if (session.status === 'requesting-permission') {
-    return 'border-sky-200 bg-sky-50 text-sky-800';
-  }
-
+function getSessionStatusToneClass(session: TrackingSession): string {
   if (session.status === 'active') {
     return 'border-emerald-200 bg-emerald-50 text-emerald-800';
   }
@@ -376,15 +374,80 @@ function getStatusToneClass(session: TrackingSession): string {
     return 'border-amber-200 bg-amber-50 text-amber-900';
   }
 
-  if (session.status === 'permission-denied') {
-    return 'border-rose-200 bg-rose-50 text-rose-800';
-  }
-
-  if (session.status === 'error') {
-    return 'border-amber-200 bg-amber-50 text-amber-900';
+  if (session.status === 'stopped') {
+    return 'border-slate-200 bg-slate-100 text-slate-700';
   }
 
   return 'border-slate-200 bg-slate-50 text-slate-700';
+}
+
+function getGpsToneClass(gpsAvailability: TrackingSession['gpsAvailability']): string {
+  if (gpsAvailability === 'available') {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-800';
+  }
+
+  if (gpsAvailability === 'acquiring' || gpsAvailability === 'temporarily-unavailable') {
+    return 'border-sky-200 bg-sky-50 text-sky-800';
+  }
+
+  if (gpsAvailability === 'denied' || gpsAvailability === 'error') {
+    return 'border-rose-200 bg-rose-50 text-rose-800';
+  }
+
+  return 'border-slate-200 bg-slate-50 text-slate-700';
+}
+
+function getGpsAvailabilityLabel(gpsAvailability: TrackingSession['gpsAvailability']): string {
+  switch (gpsAvailability) {
+    case 'available':
+      return 'Available';
+    case 'acquiring':
+      return 'Acquiring signal';
+    case 'temporarily-unavailable':
+      return 'Temporarily unavailable';
+    case 'denied':
+      return 'Permission denied';
+    case 'error':
+      return 'Error';
+    default:
+      return 'Unknown';
+  }
+}
+
+function getGpsStatusMessage(session: TrackingSession): string {
+  if (session.gpsAvailability === 'available') {
+    return 'Location updates are being recorded.';
+  }
+
+  if (session.gpsAvailability === 'acquiring') {
+    return 'Waiting for GPS signal. Tracking continues and points will appear once available.';
+  }
+
+  if (session.gpsAvailability === 'temporarily-unavailable') {
+    return 'GPS signal unavailable — route points will resume when signal returns.';
+  }
+
+  if (session.gpsAvailability === 'denied') {
+    return 'Location permission is denied. Tracking session is still active.';
+  }
+
+  if (session.gpsAvailability === 'error') {
+    return 'Location updates paused due to a temporary error. Tracking session is still active.';
+  }
+
+  return 'GPS status will appear once tracking starts.';
+}
+
+function getCurrentSpeedDisplay(session: TrackingSession): string {
+  if (session.status !== 'active') {
+    return '—';
+  }
+
+  if (session.gpsAvailability !== 'available') {
+    return '—';
+  }
+
+  return `${session.currentSpeedKmh.toFixed(1)} km/h`;
 }
 
 function formatElapsed(elapsedSeconds: number): string {

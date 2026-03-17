@@ -17,7 +17,7 @@ import {
   readPersistedTrackingSession
 } from './trackingSessionPersistence';
 import { initialTrackingSession } from './trackingTypes';
-import type { TrackingGeolocationError, TrackingSession } from './trackingTypes';
+import type { GpsAvailabilityStatus, TrackingSession } from './trackingTypes';
 
 export function useActiveTrackingSession() {
   const [session, setSession] = useState<TrackingSession>(initialTrackingSession);
@@ -39,13 +39,13 @@ export function useActiveTrackingSession() {
   }, []);
 
   const beginWatchLoop = useCallback(
-    (setRequestingStatus = false) => {
+    (setAcquiringStatus = false) => {
       stopTrackingResources();
 
-      if (setRequestingStatus) {
+      if (setAcquiringStatus) {
         setSession((previous) => ({
           ...previous,
-          status: 'requesting-permission',
+          gpsAvailability: 'acquiring',
           geolocationError: undefined
         }));
       }
@@ -53,7 +53,7 @@ export function useActiveTrackingSession() {
       watchIdRef.current = startBrowserPositionWatch({
         onPosition: (position) => {
           setSession((previous) => {
-            if (!previous.startedAt || previous.status === 'paused') {
+            if (!previous.startedAt || previous.status !== 'active') {
               return previous;
             }
 
@@ -77,28 +77,44 @@ export function useActiveTrackingSession() {
 
             return {
               ...previous,
-              status: 'active',
               currentPosition: position,
+              lastSuccessfulGpsAt: position.timestamp,
               routePoints,
               totalDistanceKm,
               currentSpeedKmh,
               maxSpeedKmh,
               elapsedSeconds,
               averageSpeedKmh: deriveAverageSpeedKmh(totalDistanceKm, elapsedSeconds),
+              gpsAvailability: 'available',
               geolocationError: undefined,
               pausedAt: undefined
             };
           });
         },
         onError: (geolocationError) => {
-          stopTrackingResources();
-          setSession((previous) => ({
-            ...previous,
-            status: isPermissionDeniedError(geolocationError) ? 'permission-denied' : 'error',
-            geolocationError,
-            pausedAt: undefined,
-            currentSpeedKmh: 0
-          }));
+          setSession((previous) => {
+            if (previous.status !== 'active') {
+              return previous;
+            }
+
+            const gpsAvailability = isPermissionDeniedError(geolocationError)
+              ? 'denied'
+              : geolocationError.code === 2 || geolocationError.code === 3
+                ? 'temporarily-unavailable'
+                : 'error';
+
+            return {
+              ...previous,
+              gpsAvailability,
+              geolocationError,
+              currentSpeedKmh: 0
+            };
+          });
+
+          if (isPermissionDeniedError(geolocationError)) {
+            stopBrowserPositionWatch(watchIdRef.current);
+            watchIdRef.current = undefined;
+          }
         }
       });
 
@@ -113,10 +129,13 @@ export function useActiveTrackingSession() {
             previous.accumulatedPausedSeconds
           );
 
+          const gpsAvailability = resolveStaleGpsAvailability(previous);
+
           return {
             ...previous,
             elapsedSeconds,
-            averageSpeedKmh: deriveAverageSpeedKmh(previous.totalDistanceKm, elapsedSeconds)
+            averageSpeedKmh: deriveAverageSpeedKmh(previous.totalDistanceKm, elapsedSeconds),
+            gpsAvailability
           };
         });
       }, 1000);
@@ -124,13 +143,13 @@ export function useActiveTrackingSession() {
     [stopTrackingResources]
   );
 
-
   const startTracking = useCallback(() => {
     const startedAt = new Date().toISOString();
 
     setSession((previous) => ({
       ...previous,
-      status: 'requesting-permission',
+      status: 'active',
+      gpsAvailability: 'acquiring',
       geolocationError: undefined,
       startedAt,
       pausedAt: undefined,
@@ -140,7 +159,8 @@ export function useActiveTrackingSession() {
       currentSpeedKmh: 0,
       averageSpeedKmh: 0,
       maxSpeedKmh: 0,
-      routePoints: []
+      routePoints: [],
+      lastSuccessfulGpsAt: undefined
     }));
 
     beginWatchLoop();
@@ -175,7 +195,8 @@ export function useActiveTrackingSession() {
 
       return {
         ...previous,
-        status: 'requesting-permission',
+        status: 'active',
+        gpsAvailability: 'acquiring',
         pausedAt: undefined,
         accumulatedPausedSeconds: previous.accumulatedPausedSeconds + pausedSeconds,
         elapsedSeconds: previous.startedAt
@@ -205,31 +226,35 @@ export function useActiveTrackingSession() {
       ? 0
       : Math.max(0, Math.floor((now - savedAtMs) / 1000));
 
+    const resumedIsPaused = restoredSession.status === 'paused';
+    const restoredGpsAvailability = getRestoredGpsAvailability(restoredSession, resumedIsPaused);
     const hydratedSession: TrackingSession = {
       ...restoredSession,
-      status: restoredSession.status === 'paused' ? 'paused' : 'requesting-permission',
-      pausedAt: restoredSession.status === 'paused' ? restoredSession.pausedAt : undefined,
-      accumulatedPausedSeconds:
-        restoredSession.status === 'paused'
-          ? restoredSession.accumulatedPausedSeconds
-          : restoredSession.accumulatedPausedSeconds + interruptionSeconds,
+      status: resumedIsPaused ? 'paused' : 'active',
+      gpsAvailability: restoredGpsAvailability,
+      pausedAt: resumedIsPaused ? restoredSession.pausedAt : undefined,
+      accumulatedPausedSeconds: resumedIsPaused
+        ? restoredSession.accumulatedPausedSeconds
+        : restoredSession.accumulatedPausedSeconds + interruptionSeconds,
       elapsedSeconds: restoredSession.startedAt
         ? calculateActiveElapsedSeconds(
             restoredSession.startedAt,
-            restoredSession.status === 'paused'
+            resumedIsPaused
               ? restoredSession.accumulatedPausedSeconds
               : restoredSession.accumulatedPausedSeconds + interruptionSeconds
           )
         : restoredSession.elapsedSeconds,
-      currentSpeedKmh: restoredSession.status === 'paused' ? 0 : restoredSession.currentSpeedKmh,
-      geolocationError: undefined
+      currentSpeedKmh: resumedIsPaused ? 0 : restoredSession.currentSpeedKmh,
+      geolocationError: shouldPreserveGpsError(restoredSession.gpsAvailability)
+        ? restoredSession.geolocationError
+        : undefined
     };
 
     setSession(hydratedSession);
     setRestoredSession(undefined);
     setRestoredSavedAt(undefined);
 
-    if (hydratedSession.status !== 'paused') {
+    if (!resumedIsPaused) {
       beginWatchLoop(true);
     }
   }, [beginWatchLoop, restoredSavedAt, restoredSession]);
@@ -249,7 +274,7 @@ export function useActiveTrackingSession() {
     if (!hasCheckedRestore) return;
     if (restoredSession) return;
 
-    if (session.status === 'active' || session.status === 'paused' || session.status === 'requesting-permission') {
+    if (session.status === 'active' || session.status === 'paused') {
       persistTrackingSession(session);
       return;
     }
@@ -262,7 +287,6 @@ export function useActiveTrackingSession() {
       stopTrackingResources();
     };
   }, [stopTrackingResources]);
-
 
   const clearCurrentSession = useCallback(() => {
     stopTrackingResources();
@@ -299,4 +323,49 @@ function calculateActiveElapsedSeconds(startedAt: string, accumulatedPausedSecon
 
   const activeSeconds = Math.floor((Date.now() - startedMs) / 1000) - accumulatedPausedSeconds;
   return Math.max(0, activeSeconds);
+}
+
+
+function getRestoredGpsAvailability(session: TrackingSession, isPaused: boolean): GpsAvailabilityStatus {
+  if (isPaused) {
+    return 'unknown';
+  }
+
+  if (session.gpsAvailability === 'temporarily-unavailable' || session.gpsAvailability === 'denied' || session.gpsAvailability === 'error') {
+    return session.gpsAvailability;
+  }
+
+  return 'acquiring';
+}
+
+function shouldPreserveGpsError(gpsAvailability: GpsAvailabilityStatus): boolean {
+  return gpsAvailability === 'temporarily-unavailable' || gpsAvailability === 'denied' || gpsAvailability === 'error';
+}
+
+const GPS_STALE_AFTER_SECONDS = 15;
+
+function resolveStaleGpsAvailability(session: TrackingSession): GpsAvailabilityStatus {
+  if (session.gpsAvailability === 'denied' || session.gpsAvailability === 'error') {
+    return session.gpsAvailability;
+  }
+
+  if (!session.lastSuccessfulGpsAt) {
+    return session.gpsAvailability;
+  }
+
+  const lastSuccessMs = new Date(session.lastSuccessfulGpsAt).getTime();
+  if (Number.isNaN(lastSuccessMs)) {
+    return session.gpsAvailability;
+  }
+
+  const staleSeconds = Math.floor((Date.now() - lastSuccessMs) / 1000);
+  if (staleSeconds >= GPS_STALE_AFTER_SECONDS) {
+    return 'temporarily-unavailable';
+  }
+
+  if (session.gpsAvailability === 'temporarily-unavailable' || session.gpsAvailability === 'acquiring') {
+    return 'available';
+  }
+
+  return session.gpsAvailability;
 }

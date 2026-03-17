@@ -31,7 +31,7 @@ export function AppLayout() {
         className="fixed left-3 right-3 z-40 mx-auto flex max-w-md items-center justify-between rounded-2xl border border-slate-200 bg-white/95 px-2 py-2 shadow-lg backdrop-blur md:hidden"
         style={{ bottom: 'max(env(safe-area-inset-bottom), 0.5rem)' }}
       >
-        {navItems.slice(0, 5).map(({ label, to, icon: Icon }) => (
+        {navItems.filter((item) => ['/', '/trips', '/track', '/vehicles', '/stats'].includes(item.to)).map(({ label, to, icon: Icon }) => (
           <NavItem key={to} label={label} to={to} Icon={Icon} compact />
         ))}
       </nav>
