@@ -9,6 +9,7 @@ import VehicleCreatePage from '../features/vehicles/VehicleCreatePage';
 import VehicleDetailPage from '../features/vehicles/VehicleDetailPage';
 import VehicleEditPage from '../features/vehicles/VehicleEditPage';
 import VehiclesPage from '../features/vehicles/VehiclesPage';
+import TrackPage from '../features/track/TrackPage';
 import PlaceholderPage from '../pages/PlaceholderPage';
 
 export function AppRoutes() {
@@ -20,7 +21,7 @@ export function AppRoutes() {
         <Route path="/trips/:tripId" element={<TripDetailPage />} />
         <Route path="/trips/new" element={<ManualTripCreatePage />} />
         <Route path="/trips/:tripId/edit" element={<ManualTripEditPage />} />
-        <Route path="/track" element={<PlaceholderPage title="Live Tracking" />} />
+        <Route path="/track" element={<TrackPage />} />
         <Route path="/vehicles" element={<VehiclesPage />} />
         <Route path="/vehicles/new" element={<VehicleCreatePage />} />
         <Route path="/vehicles/:vehicleId/edit" element={<VehicleEditPage />} />

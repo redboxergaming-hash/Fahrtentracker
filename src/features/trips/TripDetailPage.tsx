@@ -1,9 +1,10 @@
-import { ArrowLeft, MapPin, Pencil, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ArrowLeft, Pencil, Route, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { EmptyState } from '../../components/EmptyState';
 import { db } from '../../db/database';
 import type { Trip, Vehicle } from '../../types/models';
+import { TripRouteMap } from './components/TripRouteMap';
 import { deleteManualTrip } from './tripMutations';
 import {
   formatTripAvgSpeed,
@@ -109,6 +110,8 @@ export default function TripDetailPage() {
     );
   }
 
+  const isTrackedTrip = trip.source === 'tracked';
+
   return (
     <section className="space-y-4">
       <BackToTripsLink />
@@ -119,6 +122,7 @@ export default function TripDetailPage() {
             <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{formatTripDate(trip.startTime)}</p>
             <h2 className="mt-1 text-2xl font-semibold text-slate-900">{getTripRouteSummary(trip)}</h2>
             <p className="mt-1 text-sm text-slate-600">{vehicle ? `${vehicle.name} · ${vehicle.brand} ${vehicle.model}` : 'Unknown vehicle'}</p>
+            <SourceBadge source={trip.source} />
           </div>
 
           {trip.source === 'manual' ? (
@@ -200,17 +204,80 @@ export default function TripDetailPage() {
         </dl>
       </section>
 
-      <section className="rounded-2xl border border-dashed border-slate-300 bg-white p-5">
-        <h3 className="text-lg font-semibold text-slate-900">Route</h3>
-        <p className="mt-2 text-sm text-slate-600">Map and route visualization will be added in a later step.</p>
-        <div className="mt-3 flex min-h-24 items-center justify-center rounded-xl bg-slate-50 text-slate-500">
-          <MapPin size={18} className="mr-2" /> Route placeholder
-        </div>
-      </section>
+      <RouteSection trip={trip} isTrackedTrip={isTrackedTrip} />
     </section>
   );
 }
 
+function RouteSection({ trip, isTrackedTrip }: { trip: Trip; isTrackedTrip: boolean }) {
+  const hasRoutePoints = trip.routePoints.length > 0;
+  const startPoint = trip.routePoints[0];
+  const endPoint = trip.routePoints[trip.routePoints.length - 1];
+
+  const fallbackStart = useMemo(
+    () => (trip.startLat !== undefined && trip.startLng !== undefined ? `${trip.startLat.toFixed(6)}, ${trip.startLng.toFixed(6)}` : '—'),
+    [trip.startLat, trip.startLng]
+  );
+
+  const fallbackEnd = useMemo(
+    () => (trip.endLat !== undefined && trip.endLng !== undefined ? `${trip.endLat.toFixed(6)}, ${trip.endLng.toFixed(6)}` : '—'),
+    [trip.endLat, trip.endLng]
+  );
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <h3 className="text-lg font-semibold text-slate-900">Route</h3>
+
+      <div className="mt-3 grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 sm:grid-cols-3">
+        <Stat label="Trip type" value={isTrackedTrip ? 'Tracked trip' : 'Manual trip'} />
+        <Stat label="Route points" value={`${trip.routePoints.length}`} />
+        <Stat label="Route map" value={trip.routePoints.length >= 2 ? 'Available' : 'Not enough points'} />
+      </div>
+
+      <dl className="mt-3 grid grid-cols-1 gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700 sm:grid-cols-2">
+        <Detail
+          label="Start coordinates"
+          value={startPoint ? `${startPoint.lat.toFixed(6)}, ${startPoint.lng.toFixed(6)}` : fallbackStart}
+        />
+        <Detail
+          label="End coordinates"
+          value={endPoint ? `${endPoint.lat.toFixed(6)}, ${endPoint.lng.toFixed(6)}` : fallbackEnd}
+        />
+      </dl>
+
+      {trip.routePoints.length >= 2 ? (
+        <div className="mt-3">
+          <TripRouteMap routePoints={trip.routePoints} />
+          <p className="mt-2 text-xs text-slate-500">Green marker = start, red marker = end.</p>
+        </div>
+      ) : hasRoutePoints ? (
+        <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-sm text-slate-600">
+          Only one route point is available, so a full route line cannot be rendered yet.
+        </div>
+      ) : (
+        <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-center text-sm text-slate-600">
+          No route points were saved for this trip.
+        </div>
+      )}
+
+      {!isTrackedTrip ? (
+        <p className="mt-2 text-xs text-slate-500">Manual trips may not include route capture unless points were explicitly provided.</p>
+      ) : null}
+    </section>
+  );
+}
+
+function SourceBadge({ source }: { source: Trip['source'] }) {
+  const label = formatTripSourceLabel(source);
+  const tone = source === 'tracked' ? 'border-sky-200 bg-sky-50 text-sky-800' : 'border-slate-200 bg-slate-100 text-slate-700';
+
+  return (
+    <span className={`mt-2 inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium ${tone}`}>
+      <Route size={12} />
+      {label}
+    </span>
+  );
+}
 
 function BackToTripsLink() {
   return (
@@ -252,3 +319,4 @@ function formatOptionalKm(value?: number): string {
   if (value === undefined || !Number.isFinite(value)) return '—';
   return `${Math.round(value * 10) / 10} km`;
 }
+

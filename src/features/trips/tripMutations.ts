@@ -1,4 +1,5 @@
 import { db } from '../../db/database';
+import type { TrackingSession } from '../track/trackingTypes';
 import type { Trip } from '../../types/models';
 import {
   deriveManualTripValues,
@@ -33,6 +34,56 @@ export async function createManualTrip(values: ManualTripFormValues): Promise<Tr
     notes: emptyToUndefined(values.notes),
     weather: emptyToUndefined(values.weather),
     routePoints: [],
+    createdAt: timestamp,
+    updatedAt: timestamp
+  };
+
+  await db.trips.add(trip);
+  return trip;
+}
+
+export async function createTrackedTripFromSession(session: TrackingSession): Promise<Trip> {
+  if (!session.selectedVehicleId) {
+    throw new Error('Please select a vehicle before saving a tracked trip.');
+  }
+
+  const startedAt = session.startedAt;
+  if (!startedAt) {
+    throw new Error('Tracking has not started yet.');
+  }
+
+  if (session.routePoints.length < 2) {
+    throw new Error('Not enough route points to save a tracked trip yet.');
+  }
+
+  const timestamp = new Date().toISOString();
+  const routePoints = session.routePoints;
+  const start = routePoints[0];
+  const end = routePoints[routePoints.length - 1];
+
+  const trip: Trip = {
+    id: crypto.randomUUID(),
+    vehicleId: session.selectedVehicleId,
+    status: 'completed',
+    source: 'tracked',
+    category: undefined,
+    startTime: startedAt,
+    endTime: timestamp,
+    durationSeconds: Math.max(0, Math.floor(session.elapsedSeconds)),
+    startLocationLabel: undefined,
+    endLocationLabel: undefined,
+    startLat: start?.lat,
+    startLng: start?.lng,
+    endLat: end?.lat,
+    endLng: end?.lng,
+    distanceKm: session.totalDistanceKm,
+    avgSpeedKmh: session.averageSpeedKmh,
+    maxSpeedKmh: session.maxSpeedKmh,
+    odometerStart: undefined,
+    odometerEnd: undefined,
+    notes: undefined,
+    weather: undefined,
+    routePoints,
     createdAt: timestamp,
     updatedAt: timestamp
   };
