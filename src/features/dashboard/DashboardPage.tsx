@@ -1,9 +1,24 @@
+import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../../db/database';
 
 export default function DashboardPage() {
   const vehicles = useLiveQuery(() => db.vehicles.toArray(), []);
-  const trips = useLiveQuery(() => db.trips.toArray(), []);
+  const trips = useLiveQuery(() => db.trips.orderBy('startTime').reverse().toArray(), []);
+
+  const tripMetrics = useMemo(() => {
+    const safeTrips = trips ?? [];
+    const totalDistanceKm = safeTrips.reduce((sum, trip) => sum + trip.distanceKm, 0);
+    const averageSpeedKmh = safeTrips.length > 0
+      ? safeTrips.reduce((sum, trip) => sum + trip.avgSpeedKmh, 0) / safeTrips.length
+      : 0;
+
+    return {
+      totalDistanceKm,
+      averageSpeedKmh,
+      recentTrip: safeTrips[0]
+    };
+  }, [trips]);
 
   return (
     <section className="space-y-4">
@@ -14,13 +29,15 @@ export default function DashboardPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Metric label="Vehicles" value={vehicles?.length ?? 0} />
         <Metric label="Trips" value={trips?.length ?? 0} />
-        <Metric label="Distance" value={`${(trips?.reduce((sum, t) => sum + t.distanceKm, 0) ?? 0).toFixed(1)} km`} />
-        <Metric label="Avg Speed" value={`${(trips?.reduce((sum, t) => sum + t.avgSpeedKmh, 0) ?? 0).toFixed(1)} km/h`} />
+        <Metric label="Distance" value={`${tripMetrics.totalDistanceKm.toFixed(1)} km`} />
+        <Metric label="Avg Speed" value={`${tripMetrics.averageSpeedKmh.toFixed(1)} km/h`} />
       </div>
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <h3 className="mb-2 text-lg font-medium">Recent Trip</h3>
-        {trips?.[0] ? (
-          <p className="text-sm text-slate-600">{trips[0].startLocationLabel} → {trips[0].endLocationLabel} · {trips[0].distanceKm} km</p>
+        {tripMetrics.recentTrip ? (
+          <p className="text-sm text-slate-600">
+            {tripMetrics.recentTrip.startLocationLabel} → {tripMetrics.recentTrip.endLocationLabel} · {tripMetrics.recentTrip.distanceKm} km
+          </p>
         ) : (
           <p className="text-sm text-slate-500">No trips yet.</p>
         )}

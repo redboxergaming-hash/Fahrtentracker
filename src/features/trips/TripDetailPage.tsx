@@ -5,7 +5,7 @@ import { EmptyState } from '../../components/EmptyState';
 import { db } from '../../db/database';
 import type { Trip, Vehicle } from '../../types/models';
 import { TripRouteMap } from './components/TripRouteMap';
-import { deleteManualTrip } from './tripMutations';
+import { deleteTrip } from './tripMutations';
 import { SpeedLegend } from '../track/components/SpeedLegend';
 import { shouldRenderSpeedColoredRoute, summarizeRouteSpeedDataQuality } from '../track/routeSpeedSegmentation';
 import { getSpeedColorFallbackMessage } from '../track/speedRouteUx';
@@ -68,7 +68,7 @@ export default function TripDetailPage() {
     setIsDeleting(true);
     setDeleteError(null);
     try {
-      await deleteManualTrip(trip.id);
+      await deleteTrip(trip.id);
       navigate('/trips', { replace: true });
     } catch (error) {
       console.error(error);
@@ -129,8 +129,8 @@ export default function TripDetailPage() {
             <SourceBadge source={trip.source} />
           </div>
 
-          {trip.source === 'manual' ? (
-            <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
+            {trip.source === 'manual' ? (
               <Link
                 to={`/trips/${trip.id}/edit`}
                 className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
@@ -138,26 +138,26 @@ export default function TripDetailPage() {
                 <Pencil size={14} />
                 Edit trip
               </Link>
+            ) : null}
 
-              <button
-                type="button"
-                onClick={() => {
-                  setShowDeleteConfirm((value) => !value);
-                  setDeleteError(null);
-                }}
-                className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
-              >
-                <Trash2 size={14} />
-                Delete trip
-              </button>
-            </div>
-          ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                setShowDeleteConfirm((value) => !value);
+                setDeleteError(null);
+              }}
+              className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-medium text-rose-700 transition hover:bg-rose-100"
+            >
+              <Trash2 size={14} />
+              Delete trip
+            </button>
+          </div>
         </div>
 
         {showDeleteConfirm ? (
           <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-3">
             <p className="text-sm font-medium text-rose-900">Delete this trip permanently?</p>
-            <p className="mt-1 text-xs text-rose-700">This cannot be undone. This action only deletes the current manual trip.</p>
+            <p className="mt-1 text-xs text-rose-700">This cannot be undone. This trip and its route data will be permanently removed.</p>
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"

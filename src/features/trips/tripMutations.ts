@@ -133,14 +133,10 @@ export async function updateManualTrip(id: string, values: ManualTripFormValues)
 }
 
 
-export async function deleteManualTrip(id: string): Promise<void> {
+export async function deleteTrip(id: string): Promise<void> {
   const existing = await db.trips.get(id);
   if (!existing) {
     throw new Error('Trip not found');
-  }
-
-  if (existing.source !== 'manual') {
-    throw new Error('Only manual trips can be deleted in this step');
   }
 
   await db.trips.delete(id);

@@ -17,6 +17,7 @@ export class FahrtentrackerDB extends Dexie {
 }
 
 export const db = new FahrtentrackerDB();
+const DEMO_SEED_MARKER_KEY = 'fahrtentracker:demo-seed-initialized';
 
 const now = new Date().toISOString();
 
@@ -82,9 +83,23 @@ export const demoFuelEntries: FuelEntry[] = [
 
 export async function seedDemoData() {
   if ((await db.vehicles.count()) > 0) return;
+
+  /**
+   * Demo data should only auto-seed once for a true first-run experience.
+   * After users modify/delete demo entities, we keep respecting that choice
+   * and do not recreate the seed records on every reload.
+   */
+  if (typeof window !== 'undefined' && window.localStorage.getItem(DEMO_SEED_MARKER_KEY) === '1') {
+    return;
+  }
+
   await db.transaction('rw', db.vehicles, db.trips, db.fuelEntries, async () => {
     await db.vehicles.bulkPut(demoVehicles);
     await db.trips.bulkPut(demoTrips);
     await db.fuelEntries.bulkPut(demoFuelEntries);
   });
+
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(DEMO_SEED_MARKER_KEY, '1');
+  }
 }
