@@ -1,6 +1,9 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AppLayout } from '../components/AppLayout';
 import DashboardPage from '../features/dashboard/DashboardPage';
+import ManualTripCreatePage from '../features/trips/ManualTripCreatePage';
+import ManualTripEditPage from '../features/trips/ManualTripEditPage';
+import TripDetailPage from '../features/trips/TripDetailPage';
 import TripsPage from '../features/trips/TripsPage';
 import VehicleCreatePage from '../features/vehicles/VehicleCreatePage';
 import VehicleDetailPage from '../features/vehicles/VehicleDetailPage';
@@ -14,6 +17,9 @@ export function AppRoutes() {
       <Route element={<AppLayout />}>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/trips" element={<TripsPage />} />
+        <Route path="/trips/:tripId" element={<TripDetailPage />} />
+        <Route path="/trips/new" element={<ManualTripCreatePage />} />
+        <Route path="/trips/:tripId/edit" element={<ManualTripEditPage />} />
         <Route path="/track" element={<PlaceholderPage title="Live Tracking" />} />
         <Route path="/vehicles" element={<VehiclesPage />} />
         <Route path="/vehicles/new" element={<VehicleCreatePage />} />
