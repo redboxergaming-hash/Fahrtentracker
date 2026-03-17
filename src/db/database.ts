@@ -81,8 +81,11 @@ export const demoFuelEntries: FuelEntry[] = [
   }
 ];
 
-export async function seedDemoData() {
-  if ((await db.vehicles.count()) > 0) return;
+export async function seedDemoData(enableDemoData: boolean) {
+  if (!enableDemoData) return;
+
+  const [vehicleCount, tripCount] = await Promise.all([db.vehicles.count(), db.trips.count()]);
+  if (vehicleCount > 0 || tripCount > 0) return;
 
   /**
    * Demo data should only auto-seed once for a true first-run experience.
