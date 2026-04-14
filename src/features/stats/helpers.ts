@@ -1,4 +1,5 @@
 import type { FuelEntry, Trip } from '../../types/models';
+import { deriveTrustedTripSpeedMetrics } from '../track/trustedTripSpeedMetrics';
 
 export interface StatsDateRange {
   start?: string;
@@ -127,16 +128,19 @@ function isInDateRange(value: string | undefined, range: StatsDateRange | undefi
 }
 
 function deriveAverageSpeedKmh(trips: Trip[]): number | undefined {
-  const tripsWithDuration = trips.filter((trip) => sanitizeNumber(trip.durationSeconds) > 0);
-  if (!tripsWithDuration.length) {
+  const speedSamples = trips
+    .map(getTripSpeedSample)
+    .filter((sample): sample is TripSpeedSample => sample !== undefined);
+
+  if (!speedSamples.length) {
     return undefined;
   }
 
   const weightedSpeedSum = sum(
-    tripsWithDuration.map((trip) => sanitizeNumber(trip.avgSpeedKmh) * sanitizeNumber(trip.durationSeconds))
+    speedSamples.map((sample) => sanitizeNumber(sample.averageSpeedKmh) * sanitizeNumber(sample.durationSeconds))
   );
 
-  const totalDuration = sum(tripsWithDuration.map((trip) => sanitizeNumber(trip.durationSeconds)));
+  const totalDuration = sum(speedSamples.map((sample) => sanitizeNumber(sample.durationSeconds)));
   if (totalDuration <= 0) {
     return undefined;
   }
@@ -146,10 +150,46 @@ function deriveAverageSpeedKmh(trips: Trip[]): number | undefined {
 
 function deriveMaxSpeedKmh(trips: Trip[]): number | undefined {
   const speeds = trips
-    .map((trip) => sanitizeNumber(trip.maxSpeedKmh))
+    .map((trip) => getTripSpeedSample(trip)?.maxSpeedKmh)
+    .map((speed) => sanitizeNumber(speed))
     .filter((speed) => speed > 0);
 
   return speeds.length ? round(Math.max(...speeds)) : undefined;
+}
+
+interface TripSpeedSample {
+  averageSpeedKmh: number;
+  maxSpeedKmh: number;
+  durationSeconds: number;
+}
+
+function getTripSpeedSample(trip: Trip): TripSpeedSample | undefined {
+  if (trip.source !== 'tracked') {
+    const durationSeconds = sanitizeNumber(trip.durationSeconds);
+    const averageSpeedKmh = sanitizeNumber(trip.avgSpeedKmh);
+    const maxSpeedKmh = sanitizeNumber(trip.maxSpeedKmh);
+
+    if (durationSeconds <= 0 || averageSpeedKmh <= 0) {
+      return undefined;
+    }
+
+    return {
+      averageSpeedKmh,
+      maxSpeedKmh,
+      durationSeconds
+    };
+  }
+
+  const trusted = deriveTrustedTripSpeedMetrics(trip.routePoints);
+  if (!trusted.averageSpeedKmh || trusted.validDurationSeconds <= 0) {
+    return undefined;
+  }
+
+  return {
+    averageSpeedKmh: trusted.averageSpeedKmh,
+    maxSpeedKmh: trusted.maxSpeedKmh ?? 0,
+    durationSeconds: trusted.validDurationSeconds
+  };
 }
 
 function deriveLastTripDate(trips: Trip[]): string | undefined {

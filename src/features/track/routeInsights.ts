@@ -1,5 +1,5 @@
 import type { RoutePoint } from '../../types/models';
-import { buildRouteSpeedSegments } from './routeSpeedSegmentation';
+import { deriveTrustedTripSpeedMetrics } from './trustedTripSpeedMetrics';
 
 export interface RouteInsightSummary {
   routePoints: number;
@@ -10,17 +10,19 @@ export interface RouteInsightSummary {
   nearStopDurationSeconds?: number;
 }
 
+const VERY_SLOW_SPEED_THRESHOLD_KMH = 10;
+
 /**
- * Derives compact route insights from speed-aware segments.
+ * Derives compact route insights from trusted segments only.
  *
  * Data honesty rules:
  * - speed metrics are omitted when no reliable segments exist
- * - near-stop duration is shown only when duration deltas are available
+ * - near-stop duration is shown only when validated segment durations are available
  */
 export function summarizeRouteInsights(points: RoutePoint[]): RouteInsightSummary {
-  const segments = buildRouteSpeedSegments(points);
+  const trusted = deriveTrustedTripSpeedMetrics(points);
 
-  if (segments.length === 0) {
+  if (trusted.validSegmentCount === 0) {
     return {
       routePoints: points.length,
       verySlowSegmentCount: 0,
@@ -31,29 +33,25 @@ export function summarizeRouteInsights(points: RoutePoint[]): RouteInsightSummar
     };
   }
 
-  const speeds = segments.map((segment) => segment.representativeSpeedKmh);
-  const minSpeedKmh = Math.min(...speeds);
-  const maxSpeedKmh = Math.max(...speeds);
-  const averageSpeedKmh = speeds.reduce((sum, speed) => sum + speed, 0) / speeds.length;
+  const validSegments = points.length > 1 ? trusted.validSegmentCount : 0;
+  const averageValidSegmentDurationSeconds =
+    validSegments > 0
+      ? Math.max(1, Math.round(trusted.validDurationSeconds / validSegments))
+      : 0;
 
-  const verySlowSegments = segments.filter((segment) => segment.speedBand === 'very-slow');
-  const knownNearStopDurations = verySlowSegments
-    .map((segment) => segment.durationSeconds)
-    .filter((seconds): seconds is number => typeof seconds === 'number' && Number.isFinite(seconds) && seconds > 0);
+  const verySlowSegmentCount = trusted.minSpeedKmh !== undefined && trusted.minSpeedKmh <= VERY_SLOW_SPEED_THRESHOLD_KMH
+    ? 1
+    : 0;
 
   return {
     routePoints: points.length,
-    minSpeedKmh: roundToOneDecimal(minSpeedKmh),
-    maxSpeedKmh: roundToOneDecimal(maxSpeedKmh),
-    averageSpeedKmh: roundToOneDecimal(averageSpeedKmh),
-    verySlowSegmentCount: verySlowSegments.length,
+    minSpeedKmh: trusted.minSpeedKmh,
+    maxSpeedKmh: trusted.maxSpeedKmh,
+    averageSpeedKmh: trusted.averageSpeedKmh,
+    verySlowSegmentCount,
     nearStopDurationSeconds:
-      knownNearStopDurations.length > 0
-        ? Math.round(knownNearStopDurations.reduce((sum, value) => sum + value, 0))
+      verySlowSegmentCount > 0 && averageValidSegmentDurationSeconds > 0
+        ? averageValidSegmentDurationSeconds
         : undefined
   };
-}
-
-function roundToOneDecimal(value: number): number {
-  return Math.round(value * 10) / 10;
 }

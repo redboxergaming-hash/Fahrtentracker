@@ -10,6 +10,7 @@ import { SpeedLegend } from '../track/components/SpeedLegend';
 import { shouldRenderSpeedColoredRoute, summarizeRouteSpeedDataQuality } from '../track/routeSpeedSegmentation';
 import { getSpeedColorFallbackMessage } from '../track/speedRouteUx';
 import { summarizeRouteInsights } from '../track/routeInsights';
+import { deriveTrustedTripSpeedMetrics } from '../track/trustedTripSpeedMetrics';
 import {
   formatTripAvgSpeed,
   formatTripDate,
@@ -115,6 +116,15 @@ export default function TripDetailPage() {
   }
 
   const isTrackedTrip = trip.source === 'tracked';
+  const trustedSpeedMetrics = isTrackedTrip ? deriveTrustedTripSpeedMetrics(trip.routePoints) : undefined;
+  const avgSpeedValue = isTrackedTrip
+    ? formatOptionalSpeed(trustedSpeedMetrics?.averageSpeedKmh)
+    : formatTripAvgSpeed(trip.avgSpeedKmh);
+  const maxSpeedValue = isTrackedTrip
+    ? formatOptionalSpeed(trustedSpeedMetrics?.maxSpeedKmh)
+    : trip.maxSpeedKmh > 0
+      ? `${trip.maxSpeedKmh} km/h`
+      : '—';
 
   return (
     <section className="space-y-4">
@@ -186,8 +196,8 @@ export default function TripDetailPage() {
         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
           <Stat label="Distance" value={formatTripDistance(trip.distanceKm)} />
           <Stat label="Duration" value={formatTripDuration(trip.durationSeconds)} />
-          <Stat label="Avg speed" value={formatTripAvgSpeed(trip.avgSpeedKmh)} />
-          <Stat label="Max speed" value={trip.maxSpeedKmh > 0 ? `${trip.maxSpeedKmh} km/h` : '—'} />
+          <Stat label="Avg speed" value={avgSpeedValue} />
+          <Stat label="Max speed" value={maxSpeedValue} />
         </div>
       </section>
 

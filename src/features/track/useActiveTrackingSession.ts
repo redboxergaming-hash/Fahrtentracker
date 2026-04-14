@@ -333,7 +333,10 @@ export function useActiveTrackingSession() {
 
 function computeSessionRouteMetrics(rawRoutePoints: TrackingSession['rawRoutePoints']) {
   const audit = auditRoutePointPipeline(rawRoutePoints);
-  const routePoints = extractValidatedRoutePoints(audit);
+  // Keep full validated point geometry for route rendering, even when some adjacent
+  // segments are excluded from speed metrics due to signal gaps or poor quality.
+  const routePoints = audit.validPoints.map((entry) => entry.point);
+  const speedMetricPoints = extractValidatedRoutePoints(audit);
 
   const totalDistanceKm = calculateCumulativeDistanceKmFromSegments(audit.validatedSegments);
   const currentSpeedKmh = deriveCurrentSpeedKmhFromSegments(audit.validatedSegments);
@@ -341,7 +344,7 @@ function computeSessionRouteMetrics(rawRoutePoints: TrackingSession['rawRoutePoi
 
   return {
     rawRoutePoints,
-    routePoints,
+    routePoints: routePoints.length > 0 ? routePoints : speedMetricPoints,
     unreliableRoutePoints: audit.unreliablePoints,
     trackingGaps: audit.gaps,
     discardedSpeedEstimates: audit.discardedSpeedEstimates,

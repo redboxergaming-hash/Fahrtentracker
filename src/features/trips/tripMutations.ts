@@ -1,5 +1,6 @@
 import { db } from '../../db/database';
 import type { TrackingSession } from '../track/trackingTypes';
+import { deriveTrustedTripSpeedMetrics } from '../track/trustedTripSpeedMetrics';
 import type { Trip } from '../../types/models';
 import {
   deriveManualTripValues,
@@ -56,6 +57,7 @@ export async function createTrackedTripFromSession(session: TrackingSession): Pr
   const routePoints = session.routePoints;
   const start = routePoints[0];
   const end = routePoints[routePoints.length - 1];
+  const trustedSpeedMetrics = deriveTrustedTripSpeedMetrics(routePoints);
 
   /**
    * Stop/save must work even if GPS is currently unavailable.
@@ -80,8 +82,8 @@ export async function createTrackedTripFromSession(session: TrackingSession): Pr
     endLat: end?.lat,
     endLng: end?.lng,
     distanceKm: session.totalDistanceKm,
-    avgSpeedKmh: session.averageSpeedKmh,
-    maxSpeedKmh: session.maxSpeedKmh,
+    avgSpeedKmh: trustedSpeedMetrics.averageSpeedKmh ?? 0,
+    maxSpeedKmh: trustedSpeedMetrics.maxSpeedKmh ?? 0,
     odometerStart: undefined,
     odometerEnd: undefined,
     notes: undefined,

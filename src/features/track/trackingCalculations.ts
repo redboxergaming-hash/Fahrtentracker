@@ -204,7 +204,10 @@ export function auditRoutePointPipeline(
         derivedSpeedKmh: speedSelection.derivedSpeedKmh,
         browserSpeedKmh: speedSelection.browserSpeedKmh
       });
-      continue;
+
+      if (speedSelection.discardedReason === 'invalid-duration' || speedSelection.discardedReason === 'exceeds-max-derived-speed') {
+        continue;
+      }
     }
 
     validatedSegments.push({
