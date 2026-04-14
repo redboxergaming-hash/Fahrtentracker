@@ -1,4 +1,5 @@
 import type { RoutePoint } from '../../types/models';
+import type { DiscardedSpeedEstimate, TrackingGap, UnreliableRoutePoint } from './trackingCalculations';
 
 export type TrackingStatus = 'idle' | 'active' | 'paused' | 'stopped';
 
@@ -35,7 +36,11 @@ export interface TrackingSession {
   accumulatedPausedSeconds: number;
   currentPosition?: TrackingPosition;
   lastSuccessfulGpsAt?: string;
+  rawRoutePoints: RoutePoint[];
   routePoints: RoutePoint[];
+  unreliableRoutePoints: UnreliableRoutePoint[];
+  trackingGaps: TrackingGap[];
+  discardedSpeedEstimates: DiscardedSpeedEstimate[];
   elapsedSeconds: number;
   totalDistanceKm: number;
   currentSpeedKmh: number;
@@ -53,7 +58,11 @@ export const initialTrackingSession: TrackingSession = {
   accumulatedPausedSeconds: 0,
   currentPosition: undefined,
   lastSuccessfulGpsAt: undefined,
+  rawRoutePoints: [],
   routePoints: [],
+  unreliableRoutePoints: [],
+  trackingGaps: [],
+  discardedSpeedEstimates: [],
   elapsedSeconds: 0,
   totalDistanceKm: 0,
   currentSpeedKmh: 0,

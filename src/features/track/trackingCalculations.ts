@@ -3,52 +3,274 @@ import type { RoutePoint } from '../../types/models';
 const EARTH_RADIUS_METERS = 6_371_000;
 const DEFAULT_MAX_ACCURACY_METERS = 120;
 const DEFAULT_MAX_POINT_GAP_METERS = 5_000;
+const DEFAULT_MAX_POINT_GAP_SECONDS = 90;
 const DEFAULT_MAX_DERIVED_SPEED_KMH = 220;
+const DEFAULT_MAX_BROWSER_DERIVED_DELTA_KMH = 65;
+
+export type UnreliablePointReason =
+  | 'invalid-coordinate'
+  | 'invalid-timestamp'
+  | 'low-accuracy'
+  | 'non-increasing-timestamp';
+
+export type TrackingGapReason = 'signal-gap' | 'jumped-distance';
+
+export type DiscardedSpeedEstimateReason =
+  | 'invalid-duration'
+  | 'gap-segment'
+  | 'exceeds-max-derived-speed'
+  | 'browser-derived-mismatch'
+  | 'missing-speed-source';
+
+export type TrustedSpeedSource = 'browser-reported' | 'derived-adjacent-points';
+
+export interface ValidRoutePoint {
+  point: RoutePoint;
+  rawIndex: number;
+}
+
+export interface UnreliableRoutePoint {
+  point: RoutePoint;
+  rawIndex: number;
+  reason: UnreliablePointReason;
+}
+
+export interface TrackingGap {
+  start: RoutePoint;
+  end: RoutePoint;
+  startIndex: number;
+  endIndex: number;
+  reason: TrackingGapReason;
+  elapsedSeconds: number;
+  distanceMeters: number;
+}
+
+export interface DiscardedSpeedEstimate {
+  start: RoutePoint;
+  end: RoutePoint;
+  startIndex: number;
+  endIndex: number;
+  reason: DiscardedSpeedEstimateReason;
+  elapsedSeconds?: number;
+  distanceMeters?: number;
+  derivedSpeedKmh?: number;
+  browserSpeedKmh?: number;
+}
+
+export interface ValidatedRouteSegment {
+  start: RoutePoint;
+  end: RoutePoint;
+  startIndex: number;
+  endIndex: number;
+  distanceMeters: number;
+  elapsedSeconds: number;
+  representativeSpeedKmh: number;
+  speedSource: TrustedSpeedSource;
+}
+
+export interface RoutePointAuditResult {
+  validPoints: ValidRoutePoint[];
+  unreliablePoints: UnreliableRoutePoint[];
+  gaps: TrackingGap[];
+  discardedSpeedEstimates: DiscardedSpeedEstimate[];
+  validatedSegments: ValidatedRouteSegment[];
+}
+
+export interface RoutePointAuditOptions {
+  maxAccuracyMeters?: number;
+  maxPointGapMeters?: number;
+  maxPointGapSeconds?: number;
+  maxDerivedSpeedKmh?: number;
+  maxBrowserDerivedDeltaKmh?: number;
+}
 
 /**
- * Browser geolocation can report low-quality points (poor accuracy spikes, old timestamps,
- * and missing speed). Keep filtering/sanitization in reusable helpers so UI stays clean.
+ * Tracking quality policy:
+ * - Keep raw points untouched for diagnostics.
+ * - Mark invalid/low-trust points and keep them out of metrics.
+ * - Detect GPS/data gaps (large time or distance jumps) and avoid deriving speed across gaps.
+ * - Build trusted validated segments only when distance/time/speed checks pass.
+ *
+ * This prevents unrealistically high speed spikes after temporary signal loss.
  */
-export function sanitizeRoutePoints(
-  points: RoutePoint[],
-  options?: { maxAccuracyMeters?: number; maxPointGapMeters?: number; maxDerivedSpeedKmh?: number }
-): RoutePoint[] {
+export function auditRoutePointPipeline(
+  rawPoints: RoutePoint[],
+  options?: RoutePointAuditOptions
+): RoutePointAuditResult {
   const maxAccuracyMeters = options?.maxAccuracyMeters ?? DEFAULT_MAX_ACCURACY_METERS;
   const maxPointGapMeters = options?.maxPointGapMeters ?? DEFAULT_MAX_POINT_GAP_METERS;
+  const maxPointGapSeconds = options?.maxPointGapSeconds ?? DEFAULT_MAX_POINT_GAP_SECONDS;
   const maxDerivedSpeedKmh = options?.maxDerivedSpeedKmh ?? DEFAULT_MAX_DERIVED_SPEED_KMH;
+  const maxBrowserDerivedDeltaKmh = options?.maxBrowserDerivedDeltaKmh ?? DEFAULT_MAX_BROWSER_DERIVED_DELTA_KMH;
 
-  const sanitized: RoutePoint[] = [];
+  const validPoints: ValidRoutePoint[] = [];
+  const unreliablePoints: UnreliableRoutePoint[] = [];
+  const gaps: TrackingGap[] = [];
+  const discardedSpeedEstimates: DiscardedSpeedEstimate[] = [];
+  const validatedSegments: ValidatedRouteSegment[] = [];
 
-  for (const point of points) {
-    if (!isFiniteCoordinate(point.lat) || !isFiniteCoordinate(point.lng)) continue;
+  for (let rawIndex = 0; rawIndex < rawPoints.length; rawIndex += 1) {
+    const point = rawPoints[rawIndex];
 
-    if (point.accuracy !== undefined && point.accuracy > maxAccuracyMeters) continue;
-
-    const timestampMs = toTimestampMs(point.timestamp);
-    if (timestampMs === undefined) continue;
-
-    const previous = sanitized[sanitized.length - 1];
-    if (!previous) {
-      sanitized.push(point);
+    if (!isFiniteCoordinate(point.lat) || !isFiniteCoordinate(point.lng)) {
+      unreliablePoints.push({ point, rawIndex, reason: 'invalid-coordinate' });
       continue;
     }
 
-    const previousTimestampMs = toTimestampMs(previous.timestamp);
-    if (previousTimestampMs === undefined || timestampMs <= previousTimestampMs) continue;
+    if (point.accuracy !== undefined && point.accuracy > maxAccuracyMeters) {
+      unreliablePoints.push({ point, rawIndex, reason: 'low-accuracy' });
+      continue;
+    }
 
-    const pointDistanceMeters = calculateDistanceMeters(previous, point);
-    if (pointDistanceMeters > maxPointGapMeters) continue;
+    const timestampMs = toTimestampMs(point.timestamp);
+    if (timestampMs === undefined) {
+      unreliablePoints.push({ point, rawIndex, reason: 'invalid-timestamp' });
+      continue;
+    }
+
+    const previousValid = validPoints[validPoints.length - 1];
+    if (!previousValid) {
+      validPoints.push({ point, rawIndex });
+      continue;
+    }
+
+    const previousTimestampMs = toTimestampMs(previousValid.point.timestamp);
+    if (previousTimestampMs === undefined || timestampMs <= previousTimestampMs) {
+      unreliablePoints.push({ point, rawIndex, reason: 'non-increasing-timestamp' });
+      continue;
+    }
 
     const elapsedSeconds = (timestampMs - previousTimestampMs) / 1000;
-    if (elapsedSeconds <= 0) continue;
+    const distanceMeters = calculateDistanceMeters(previousValid.point, point);
 
-    const derivedSpeedKmh = (pointDistanceMeters / elapsedSeconds) * 3.6;
-    if (derivedSpeedKmh > maxDerivedSpeedKmh) continue;
+    validPoints.push({ point, rawIndex });
 
-    sanitized.push(point);
+    const gapReason = detectGapReason(elapsedSeconds, distanceMeters, maxPointGapSeconds, maxPointGapMeters);
+
+    if (gapReason) {
+      gaps.push({
+        start: previousValid.point,
+        end: point,
+        startIndex: previousValid.rawIndex,
+        endIndex: rawIndex,
+        reason: gapReason,
+        elapsedSeconds,
+        distanceMeters
+      });
+
+      discardedSpeedEstimates.push({
+        start: previousValid.point,
+        end: point,
+        startIndex: previousValid.rawIndex,
+        endIndex: rawIndex,
+        reason: 'gap-segment',
+        elapsedSeconds,
+        distanceMeters
+      });
+      continue;
+    }
+
+    const speedSelection = selectTrustedRepresentativeSpeed({
+      start: previousValid.point,
+      end: point,
+      elapsedSeconds,
+      distanceMeters,
+      maxDerivedSpeedKmh,
+      maxBrowserDerivedDeltaKmh
+    });
+
+    if (!speedSelection) {
+      discardedSpeedEstimates.push({
+        start: previousValid.point,
+        end: point,
+        startIndex: previousValid.rawIndex,
+        endIndex: rawIndex,
+        elapsedSeconds,
+        distanceMeters,
+        reason: 'missing-speed-source'
+      });
+      continue;
+    }
+
+    if (speedSelection.discardedReason) {
+      discardedSpeedEstimates.push({
+        start: previousValid.point,
+        end: point,
+        startIndex: previousValid.rawIndex,
+        endIndex: rawIndex,
+        elapsedSeconds,
+        distanceMeters,
+        reason: speedSelection.discardedReason,
+        derivedSpeedKmh: speedSelection.derivedSpeedKmh,
+        browserSpeedKmh: speedSelection.browserSpeedKmh
+      });
+      continue;
+    }
+
+    validatedSegments.push({
+      start: previousValid.point,
+      end: point,
+      startIndex: previousValid.rawIndex,
+      endIndex: rawIndex,
+      elapsedSeconds,
+      distanceMeters,
+      representativeSpeedKmh: speedSelection.speedKmh,
+      speedSource: speedSelection.source
+    });
   }
 
-  return sanitized;
+  return {
+    validPoints,
+    unreliablePoints,
+    gaps,
+    discardedSpeedEstimates,
+    validatedSegments
+  };
+}
+
+export function sanitizeRoutePoints(
+  points: RoutePoint[],
+  options?: RoutePointAuditOptions
+): RoutePoint[] {
+  const audit = auditRoutePointPipeline(points, options);
+  return audit.validPoints.map((entry) => entry.point);
+}
+
+export function extractValidatedRoutePoints(audit: RoutePointAuditResult): RoutePoint[] {
+  if (audit.validatedSegments.length === 0) {
+    return audit.validPoints.length > 0 ? [audit.validPoints[0].point] : [];
+  }
+
+  const points: RoutePoint[] = [audit.validatedSegments[0].start];
+  for (const segment of audit.validatedSegments) {
+    points.push(segment.end);
+  }
+
+  return points;
+}
+
+export function calculateCumulativeDistanceKmFromSegments(segments: ValidatedRouteSegment[]): number {
+  if (segments.length === 0) return 0;
+  const totalMeters = segments.reduce((sum, segment) => sum + segment.distanceMeters, 0);
+  return roundToOneDecimal(totalMeters / 1000);
+}
+
+export function deriveCurrentSpeedKmhFromSegments(segments: ValidatedRouteSegment[]): number {
+  if (segments.length === 0) return 0;
+  return roundToOneDecimal(segments[segments.length - 1].representativeSpeedKmh);
+}
+
+export function deriveMaxSpeedKmhFromSegments(segments: ValidatedRouteSegment[]): number {
+  if (segments.length === 0) return 0;
+
+  let maxSpeed = 0;
+  for (const segment of segments) {
+    if (segment.representativeSpeedKmh > maxSpeed) {
+      maxSpeed = segment.representativeSpeedKmh;
+    }
+  }
+
+  return roundToOneDecimal(maxSpeed);
 }
 
 export function calculateDistanceMeters(
@@ -71,80 +293,104 @@ export function calculateDistanceMeters(
   return EARTH_RADIUS_METERS * arc;
 }
 
-export function calculateCumulativeDistanceKm(points: RoutePoint[]): number {
-  if (points.length < 2) return 0;
-
-  let totalMeters = 0;
-  for (let index = 1; index < points.length; index += 1) {
-    totalMeters += calculateDistanceMeters(points[index - 1], points[index]);
-  }
-
-  return roundToOneDecimal(totalMeters / 1000);
-}
-
-/**
- * `GeolocationPosition.coords.speed` can be null on many devices/browsers.
- * Fallback to coordinate/time deltas when speed is not available.
- */
-export function deriveCurrentSpeedKmh(points: RoutePoint[]): number {
-  if (points.length < 2) return 0;
-
-  const latest = points[points.length - 1];
-  if (latest.speedKmh !== undefined && latest.speedKmh >= 0) {
-    return roundToOneDecimal(latest.speedKmh);
-  }
-
-  const previous = points[points.length - 2];
-  const elapsedSeconds = calculateElapsedSeconds(previous.timestamp, latest.timestamp);
-  if (elapsedSeconds <= 0) return 0;
-
-  const distanceMeters = calculateDistanceMeters(previous, latest);
-  return deriveSpeedKmh(distanceMeters, elapsedSeconds);
-}
-
 export function deriveAverageSpeedKmh(distanceKm: number, elapsedSeconds: number): number {
   if (distanceKm <= 0 || elapsedSeconds <= 0) return 0;
   return roundToOneDecimal(distanceKm / (elapsedSeconds / 3600));
 }
 
-export function deriveMaxSpeedKmh(points: RoutePoint[]): number {
-  if (points.length === 0) return 0;
+interface SpeedSelectionResult {
+  speedKmh: number;
+  source: TrustedSpeedSource;
+  browserSpeedKmh?: number;
+  derivedSpeedKmh?: number;
+  discardedReason?: DiscardedSpeedEstimateReason;
+}
 
-  let maxSpeed = 0;
-
-  for (let index = 0; index < points.length; index += 1) {
-    const point = points[index];
-    if (point.speedKmh !== undefined && point.speedKmh > maxSpeed) {
-      maxSpeed = point.speedKmh;
-      continue;
-    }
-
-    if (index === 0) continue;
-
-    const previous = points[index - 1];
-    const elapsedSeconds = calculateElapsedSeconds(previous.timestamp, point.timestamp);
-    if (elapsedSeconds <= 0) continue;
-
-    const derivedSpeed = deriveSpeedKmh(calculateDistanceMeters(previous, point), elapsedSeconds);
-    if (derivedSpeed > maxSpeed) {
-      maxSpeed = derivedSpeed;
-    }
+function selectTrustedRepresentativeSpeed(input: {
+  start: RoutePoint;
+  end: RoutePoint;
+  elapsedSeconds: number;
+  distanceMeters: number;
+  maxDerivedSpeedKmh: number;
+  maxBrowserDerivedDeltaKmh: number;
+}): SpeedSelectionResult | undefined {
+  if (input.elapsedSeconds <= 0) {
+    return { speedKmh: 0, source: 'derived-adjacent-points', discardedReason: 'invalid-duration' };
   }
 
-  return roundToOneDecimal(maxSpeed);
+  const derivedSpeedKmh = (input.distanceMeters / input.elapsedSeconds) * 3.6;
+  const isDerivedReliable = isReliableSpeedKmh(derivedSpeedKmh, input.maxDerivedSpeedKmh);
+
+  if (!isDerivedReliable) {
+    return {
+      speedKmh: 0,
+      source: 'derived-adjacent-points',
+      derivedSpeedKmh,
+      discardedReason: 'exceeds-max-derived-speed'
+    };
+  }
+
+  const browserSpeedKmh = pickReliableBrowserSpeed(input.start.speedKmh, input.end.speedKmh, input.maxDerivedSpeedKmh);
+
+  if (browserSpeedKmh !== undefined) {
+    const delta = Math.abs(browserSpeedKmh - derivedSpeedKmh);
+
+    if (delta <= input.maxBrowserDerivedDeltaKmh) {
+      return {
+        speedKmh: roundToOneDecimal(browserSpeedKmh),
+        source: 'browser-reported',
+        browserSpeedKmh,
+        derivedSpeedKmh
+      };
+    }
+
+    return {
+      speedKmh: roundToOneDecimal(derivedSpeedKmh),
+      source: 'derived-adjacent-points',
+      browserSpeedKmh,
+      derivedSpeedKmh,
+      discardedReason: 'browser-derived-mismatch'
+    };
+  }
+
+  return {
+    speedKmh: roundToOneDecimal(derivedSpeedKmh),
+    source: 'derived-adjacent-points',
+    derivedSpeedKmh
+  };
 }
 
-function deriveSpeedKmh(distanceMeters: number, elapsedSeconds: number): number {
-  if (distanceMeters <= 0 || elapsedSeconds <= 0) return 0;
-  const metersPerSecond = distanceMeters / elapsedSeconds;
-  return roundToOneDecimal(metersPerSecond * 3.6);
+function pickReliableBrowserSpeed(
+  startSpeedKmh: number | undefined,
+  endSpeedKmh: number | undefined,
+  maxDerivedSpeedKmh: number
+): number | undefined {
+  const candidates = [startSpeedKmh, endSpeedKmh].filter((value): value is number =>
+    isReliableSpeedKmh(value, maxDerivedSpeedKmh)
+  );
+
+  if (candidates.length === 0) {
+    return undefined;
+  }
+
+  return candidates.reduce((sum, value) => sum + value, 0) / candidates.length;
 }
 
-function calculateElapsedSeconds(fromTimestamp: string, toTimestamp: string): number {
-  const fromMs = toTimestampMs(fromTimestamp);
-  const toMs = toTimestampMs(toTimestamp);
-  if (fromMs === undefined || toMs === undefined || toMs <= fromMs) return 0;
-  return (toMs - fromMs) / 1000;
+function detectGapReason(
+  elapsedSeconds: number,
+  distanceMeters: number,
+  maxPointGapSeconds: number,
+  maxPointGapMeters: number
+): TrackingGapReason | undefined {
+  if (elapsedSeconds > maxPointGapSeconds) {
+    return 'signal-gap';
+  }
+
+  if (distanceMeters > maxPointGapMeters) {
+    return 'jumped-distance';
+  }
+
+  return undefined;
 }
 
 function isFiniteCoordinate(value: number): boolean {
@@ -158,6 +404,10 @@ function toTimestampMs(value: string): number | undefined {
 
 function toRadians(value: number): number {
   return (value * Math.PI) / 180;
+}
+
+function isReliableSpeedKmh(value: number | undefined, maxKmh: number): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= maxKmh;
 }
 
 function roundToOneDecimal(value: number): number {

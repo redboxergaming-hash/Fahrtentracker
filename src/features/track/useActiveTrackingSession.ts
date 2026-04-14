@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  calculateCumulativeDistanceKm,
+  auditRoutePointPipeline,
+  calculateCumulativeDistanceKmFromSegments,
   deriveAverageSpeedKmh,
-  deriveCurrentSpeedKmh,
-  deriveMaxSpeedKmh,
-  sanitizeRoutePoints
+  deriveCurrentSpeedKmhFromSegments,
+  deriveMaxSpeedKmhFromSegments,
+  extractValidatedRoutePoints
 } from './trackingCalculations';
 import {
   isPermissionDeniedError,
@@ -66,10 +67,7 @@ export function useActiveTrackingSession() {
               altitude: position.altitude
             };
 
-            const routePoints = sanitizeRoutePoints([...previous.routePoints, point]);
-            const totalDistanceKm = calculateCumulativeDistanceKm(routePoints);
-            const currentSpeedKmh = deriveCurrentSpeedKmh(routePoints);
-            const maxSpeedKmh = deriveMaxSpeedKmh(routePoints);
+            const routeComputation = computeSessionRouteMetrics([...previous.rawRoutePoints, point]);
             const elapsedSeconds = calculateActiveElapsedSeconds(
               previous.startedAt,
               previous.accumulatedPausedSeconds
@@ -79,12 +77,16 @@ export function useActiveTrackingSession() {
               ...previous,
               currentPosition: position,
               lastSuccessfulGpsAt: position.timestamp,
-              routePoints,
-              totalDistanceKm,
-              currentSpeedKmh,
-              maxSpeedKmh,
+              rawRoutePoints: routeComputation.rawRoutePoints,
+              routePoints: routeComputation.routePoints,
+              unreliableRoutePoints: routeComputation.unreliableRoutePoints,
+              trackingGaps: routeComputation.trackingGaps,
+              discardedSpeedEstimates: routeComputation.discardedSpeedEstimates,
+              totalDistanceKm: routeComputation.totalDistanceKm,
+              currentSpeedKmh: routeComputation.currentSpeedKmh,
+              maxSpeedKmh: routeComputation.maxSpeedKmh,
               elapsedSeconds,
-              averageSpeedKmh: deriveAverageSpeedKmh(totalDistanceKm, elapsedSeconds),
+              averageSpeedKmh: deriveAverageSpeedKmh(routeComputation.totalDistanceKm, elapsedSeconds),
               gpsAvailability: 'available',
               geolocationError: undefined,
               pausedAt: undefined
@@ -159,7 +161,11 @@ export function useActiveTrackingSession() {
       currentSpeedKmh: 0,
       averageSpeedKmh: 0,
       maxSpeedKmh: 0,
+      rawRoutePoints: [],
       routePoints: [],
+      unreliableRoutePoints: [],
+      trackingGaps: [],
+      discardedSpeedEstimates: [],
       lastSuccessfulGpsAt: undefined
     }));
 
@@ -228,8 +234,16 @@ export function useActiveTrackingSession() {
 
     const resumedIsPaused = restoredSession.status === 'paused';
     const restoredGpsAvailability = getRestoredGpsAvailability(restoredSession, resumedIsPaused);
+    const restoredRawPoints = Array.isArray(restoredSession.rawRoutePoints) ? restoredSession.rawRoutePoints : [];
+    const restoredValidatedPoints = Array.isArray(restoredSession.routePoints) ? restoredSession.routePoints : [];
+
+    const normalizedRouteMetrics = computeSessionRouteMetrics(
+      restoredRawPoints.length > 0 ? restoredRawPoints : restoredValidatedPoints
+    );
+
     const hydratedSession: TrackingSession = {
       ...restoredSession,
+      ...normalizedRouteMetrics,
       status: resumedIsPaused ? 'paused' : 'active',
       gpsAvailability: restoredGpsAvailability,
       pausedAt: resumedIsPaused ? restoredSession.pausedAt : undefined,
@@ -244,7 +258,7 @@ export function useActiveTrackingSession() {
               : restoredSession.accumulatedPausedSeconds + interruptionSeconds
           )
         : restoredSession.elapsedSeconds,
-      currentSpeedKmh: resumedIsPaused ? 0 : restoredSession.currentSpeedKmh,
+      currentSpeedKmh: resumedIsPaused ? 0 : normalizedRouteMetrics.currentSpeedKmh,
       geolocationError: shouldPreserveGpsError(restoredSession.gpsAvailability)
         ? restoredSession.geolocationError
         : undefined
@@ -317,6 +331,26 @@ export function useActiveTrackingSession() {
   };
 }
 
+function computeSessionRouteMetrics(rawRoutePoints: TrackingSession['rawRoutePoints']) {
+  const audit = auditRoutePointPipeline(rawRoutePoints);
+  const routePoints = extractValidatedRoutePoints(audit);
+
+  const totalDistanceKm = calculateCumulativeDistanceKmFromSegments(audit.validatedSegments);
+  const currentSpeedKmh = deriveCurrentSpeedKmhFromSegments(audit.validatedSegments);
+  const maxSpeedKmh = deriveMaxSpeedKmhFromSegments(audit.validatedSegments);
+
+  return {
+    rawRoutePoints,
+    routePoints,
+    unreliableRoutePoints: audit.unreliablePoints,
+    trackingGaps: audit.gaps,
+    discardedSpeedEstimates: audit.discardedSpeedEstimates,
+    totalDistanceKm,
+    currentSpeedKmh,
+    maxSpeedKmh
+  };
+}
+
 function calculateActiveElapsedSeconds(startedAt: string, accumulatedPausedSeconds: number): number {
   const startedMs = new Date(startedAt).getTime();
   if (Number.isNaN(startedMs)) return 0;
@@ -324,7 +358,6 @@ function calculateActiveElapsedSeconds(startedAt: string, accumulatedPausedSecon
   const activeSeconds = Math.floor((Date.now() - startedMs) / 1000) - accumulatedPausedSeconds;
   return Math.max(0, activeSeconds);
 }
-
 
 function getRestoredGpsAvailability(session: TrackingSession, isPaused: boolean): GpsAvailabilityStatus {
   if (isPaused) {
